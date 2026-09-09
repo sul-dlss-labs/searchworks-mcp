@@ -83,3 +83,7 @@ push to `main` publishes it to GitHub Container Registry, tagged both `sha-<comm
 
 Publishing uses the workflow's built-in `GITHUB_TOKEN`, so no registry secret has to be
 configured. The package is private until made public in the repository's package settings.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
