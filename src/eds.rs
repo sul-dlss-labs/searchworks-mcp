@@ -212,7 +212,7 @@ fn deep_strings(value: Option<&Value>, key: &str, out: &mut Vec<String>) {
     }
 }
 pub fn sanitize_markup(input: &str) -> String {
-    strip_markup(&html_escape::decode_html_entities(input))
+    markup_lines(input).join(" ")
 }
 
 /// EDS packs several values into one `Data` string separated by `<br />`. The
@@ -220,10 +220,12 @@ pub fn sanitize_markup(input: &str) -> String {
 /// into ordinary spaces, after which the values are indistinguishable from one
 /// run-on string.
 fn markup_lines(input: &str) -> Vec<String> {
-    static BREAK_TAG: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?i)<br\s*/?>").expect("valid regex"));
+    static TEXT_BREAK: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"(?i)<\s*/?\s*(?:br|p|div|li|ul|ol|tr|td|th|h[1-6]|blockquote|section)\b[^>]*>")
+            .expect("valid regex")
+    });
     let decoded = html_escape::decode_html_entities(input);
-    BREAK_TAG
+    TEXT_BREAK
         .split(&decoded)
         .map(strip_markup)
         .filter(|line| !line.is_empty())
@@ -237,7 +239,11 @@ fn strip_markup(decoded: &str) -> String {
     static SPACE_BEFORE_PUNCTUATION: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\s+([.,;:!?])").expect("valid regex"));
     let fragment = Html::parse_fragment(decoded);
-    let text = fragment.root_element().text().collect::<Vec<_>>().join(" ");
+    // Concatenated, not joined on a space: inline markup such as the `<sub>` in
+    // `H<sub>2</sub>O` splits one word across several text nodes, and a space
+    // between them would corrupt formulae, species names and hyphenations.
+    // Breaks between separate runs of text are handled by `markup_lines`.
+    let text = fragment.root_element().text().collect::<String>();
     let safe = CONTROL_CHARACTERS.replace_all(text.trim(), "");
     let normalized = WHITESPACE.replace_all(&safe, " ");
     SPACE_BEFORE_PUNCTUATION
@@ -361,10 +367,39 @@ mod tests {
     }
 
     #[test]
+    fn keeps_words_intact_across_inline_markup() {
+        assert_eq!(sanitize_markup("H<sub>2</sub>O"), "H2O");
+        assert_eq!(sanitize_markup("CO<sub>2</sub> emissions"), "CO2 emissions");
+        assert_eq!(sanitize_markup("T<sub>c</sub>=92K"), "Tc=92K");
+        assert_eq!(sanitize_markup("word<b>ing</b>"), "wording");
+        assert_eq!(
+            sanitize_markup("anti<i>-</i>inflammatory"),
+            "anti-inflammatory"
+        );
+        assert_eq!(
+            sanitize_markup("The <i>Drosophila</i> genome"),
+            "The Drosophila genome"
+        );
+    }
+
+    /// Separate runs of text still have to stay separated, which is why the
+    /// text nodes cannot simply be concatenated end to end.
+    #[test]
+    fn keeps_separate_runs_of_text_apart() {
+        assert_eq!(
+            sanitize_markup("line one<br />line two"),
+            "line one line two"
+        );
+        assert_eq!(sanitize_markup("line one<BR>line two"), "line one line two");
+        assert_eq!(sanitize_markup("<p>one</p><p>two</p>"), "one two");
+        assert_eq!(sanitize_markup("<li>a</li><li>b</li>"), "a b");
+    }
+
+    #[test]
     fn strips_markup_and_unsafe_control_characters() {
         assert_eq!(
             sanitize_markup("hello<script>bad()</script>\u{0007}<b>world</b>"),
-            "hello bad() world"
+            "hellobad()world"
         );
     }
 }
