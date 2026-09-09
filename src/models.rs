@@ -4,6 +4,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Limits advertised in the published tool input schemas. rmcp deserializes
+/// tool arguments with plain serde and never validates them against the
+/// schema, so a client can send anything that parses; these are the values the
+/// handlers enforce themselves. `runtime_limits_match_the_published_schema`
+/// keeps the two from drifting apart.
+pub const MAX_QUERY_CHARS: usize = 1000;
+pub const MAX_FILTER_CHARS: usize = 500;
+pub const MAX_ID_CHARS: usize = 255;
+pub const MIN_ROWS: u8 = 1;
+pub const MAX_ROWS: u8 = 20;
+
 fn default_rows() -> u8 {
     10
 }
@@ -188,6 +199,8 @@ pub struct RecordOutput {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
 
     /// The upstream field names are SearchWorks facet field names, verified
@@ -241,5 +254,48 @@ mod tests {
             filters.pairs().collect::<Vec<_>>(),
             [("library", "GREEN", "library")]
         );
+    }
+
+    #[test]
+    fn runtime_limits_match_the_published_schema() {
+        let catalog =
+            serde_json::to_value(schemars::schema_for!(CatalogSearchArgs)).expect("schema");
+        assert_eq!(
+            catalog["properties"]["query"]["maxLength"],
+            json!(MAX_QUERY_CHARS)
+        );
+        assert_eq!(catalog["properties"]["rows"]["minimum"], json!(MIN_ROWS));
+        assert_eq!(catalog["properties"]["rows"]["maximum"], json!(MAX_ROWS));
+        let filters = &catalog["$defs"]["CatalogFilters"]["properties"];
+        for field in [
+            "access",
+            "format",
+            "library",
+            "genre",
+            "language",
+            "author",
+            "topic",
+            "region",
+            "call_number",
+            "era",
+            "organization_as_author",
+        ] {
+            assert_eq!(
+                filters[field]["maxLength"],
+                json!(MAX_FILTER_CHARS),
+                "filter {field}"
+            );
+        }
+
+        let article =
+            serde_json::to_value(schemars::schema_for!(ArticleSearchArgs)).expect("schema");
+        assert_eq!(
+            article["properties"]["query"]["maxLength"],
+            json!(MAX_QUERY_CHARS)
+        );
+        assert_eq!(article["properties"]["rows"]["maximum"], json!(MAX_ROWS));
+
+        let record = serde_json::to_value(schemars::schema_for!(RecordArgs)).expect("schema");
+        assert_eq!(record["properties"]["id"]["maxLength"], json!(MAX_ID_CHARS));
     }
 }

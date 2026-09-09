@@ -14,8 +14,9 @@ use crate::{
     eds,
     error::{ApiError, ErrorKind},
     models::{
-        ArticleResult, ArticleSearchArgs, ArticleSearchOutput, CatalogResult, CatalogSearchArgs,
-        CatalogSearchOutput, Facet, FacetValue, RecordArgs, RecordOutput, SearchField,
+        ArticleResult, ArticleSearchArgs, ArticleSearchOutput, CatalogFilters, CatalogResult,
+        CatalogSearchArgs, CatalogSearchOutput, Facet, FacetValue, MAX_FILTER_CHARS, MAX_ID_CHARS,
+        MAX_QUERY_CHARS, MAX_ROWS, MIN_ROWS, RecordArgs, RecordOutput, SearchField,
     },
 };
 
@@ -84,9 +85,9 @@ impl SearchworksMcp {
         &self,
         Parameters(args): Parameters<CatalogSearchArgs>,
     ) -> Result<CallToolResult, McpError> {
-        if args.query.trim().is_empty() {
-            return Err(McpError::invalid_params("query must not be blank", None));
-        }
+        validate_query(&args.query)?;
+        validate_filters(&args.filters)?;
+        let rows = clamp_rows(args.rows);
         let search_field = catalog_field(args.search_field);
         let upstream_filters: BTreeMap<_, _> = args
             .filters
@@ -100,7 +101,7 @@ impl SearchworksMcp {
             .collect();
         let response = match self
             .client
-            .catalog_search(&args.query, search_field, args.rows, &upstream_filters)
+            .catalog_search(&args.query, search_field, rows, &upstream_filters)
             .await
         {
             Ok(v) => v,
@@ -141,12 +142,14 @@ impl SearchworksMcp {
         &self,
         Parameters(args): Parameters<ArticleSearchArgs>,
     ) -> Result<CallToolResult, McpError> {
-        if args.query.trim().is_empty() {
-            return Err(McpError::invalid_params("query must not be blank", None));
-        }
+        validate_query(&args.query)?;
         let response = match self
             .client
-            .article_search(&args.query, article_field(args.search_field), args.rows)
+            .article_search(
+                &args.query,
+                article_field(args.search_field),
+                clamp_rows(args.rows),
+            )
             .await
         {
             Ok(v) => v,
@@ -263,10 +266,44 @@ impl SearchworksMcp {
 impl ServerHandler for SearchworksMcp {}
 
 fn validate_id(id: &str) -> Result<(), McpError> {
-    if id.trim().is_empty() || id.len() > 255 || id.chars().any(char::is_control) {
+    if id.trim().is_empty() || id.chars().count() > MAX_ID_CHARS || id.chars().any(char::is_control)
+    {
         return Err(McpError::invalid_params("id is invalid", None));
     }
     Ok(())
+}
+
+fn validate_query(query: &str) -> Result<(), McpError> {
+    if query.trim().is_empty() {
+        return Err(McpError::invalid_params("query must not be blank", None));
+    }
+    if query.chars().count() > MAX_QUERY_CHARS {
+        return Err(McpError::invalid_params(
+            format!("query must be at most {MAX_QUERY_CHARS} characters"),
+            None,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_filters(filters: &CatalogFilters) -> Result<(), McpError> {
+    for (name, value, _) in filters.pairs() {
+        if value.chars().count() > MAX_FILTER_CHARS {
+            return Err(McpError::invalid_params(
+                format!("filter {name} must be at most {MAX_FILTER_CHARS} characters"),
+                None,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `rows` is a cap on how much to return, so a value outside the advertised
+/// range is clamped rather than rejected: an out-of-range request still gets
+/// usable results, and upstream is never asked for `per_page=0`, which it
+/// answers with a 500.
+fn clamp_rows(rows: u8) -> u8 {
+    rows.clamp(MIN_ROWS, MAX_ROWS)
 }
 
 fn catalog_field(field: SearchField) -> &'static str {
@@ -526,6 +563,61 @@ mod tests {
             "holdings_library_code_ssim": ["SCIENCE", "GREEN"],
             "lc_assigned_callnum_ssim": ["PS3558.I384.R8"]
         })
+    }
+
+    #[test]
+    fn clamps_rows_into_the_advertised_range() {
+        assert_eq!(clamp_rows(0), MIN_ROWS);
+        assert_eq!(clamp_rows(1), 1);
+        assert_eq!(clamp_rows(10), 10);
+        assert_eq!(clamp_rows(20), 20);
+        assert_eq!(clamp_rows(200), MAX_ROWS);
+        assert_eq!(clamp_rows(u8::MAX), MAX_ROWS);
+    }
+
+    #[test]
+    fn rejects_blank_and_overlong_queries() {
+        assert!(validate_query("rust").is_ok());
+        assert!(validate_query("   ").is_err());
+        assert!(validate_query("").is_err());
+        assert!(validate_query(&"a".repeat(MAX_QUERY_CHARS)).is_ok());
+        assert!(validate_query(&"a".repeat(MAX_QUERY_CHARS + 1)).is_err());
+    }
+
+    /// The schema counts characters, so the runtime check has to as well; a
+    /// byte-length check would reject queries well inside the advertised limit
+    /// once they contain non-ASCII text.
+    #[test]
+    fn measures_limits_in_characters_not_bytes() {
+        let multibyte = "\u{4e16}".repeat(MAX_QUERY_CHARS);
+        assert!(
+            multibyte.len() > MAX_QUERY_CHARS,
+            "should exceed byte limit"
+        );
+        assert!(validate_query(&multibyte).is_ok());
+        assert!(validate_id(&"\u{4e16}".repeat(MAX_ID_CHARS)).is_ok());
+        assert!(validate_id(&"\u{4e16}".repeat(MAX_ID_CHARS + 1)).is_err());
+    }
+
+    #[test]
+    fn rejects_overlong_filter_values() {
+        let ok = CatalogFilters {
+            topic: Some("a".repeat(MAX_FILTER_CHARS)),
+            ..Default::default()
+        };
+        assert!(validate_filters(&ok).is_ok());
+        let too_long = CatalogFilters {
+            topic: Some("a".repeat(MAX_FILTER_CHARS + 1)),
+            ..Default::default()
+        };
+        assert!(validate_filters(&too_long).is_err());
+    }
+
+    #[test]
+    fn rejects_invalid_ids() {
+        assert!(validate_id("994811").is_ok());
+        assert!(validate_id("  ").is_err());
+        assert!(validate_id("bad\u{0007}id").is_err());
     }
 
     #[test]
