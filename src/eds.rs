@@ -131,32 +131,32 @@ pub fn start_page(document: &Value) -> Option<String> {
     deep_strings(bib_entity(document), "StartPage", &mut values);
     values.into_iter().next()
 }
+/// Every source database labels its subject items differently (`Subjects`,
+/// `Descriptors`, `Geographic Terms`, `Categories`, ...), so match on the `Su`
+/// group rather than an allow-list of labels, and read every matching item
+/// rather than only the first.
 pub fn subjects(document: &Value) -> Vec<String> {
-    let raw = item(document, Some("Subject"), Some("Subject Terms"), Some("Su"))
-        .or_else(|| {
-            item(
-                document,
-                Some("Subject"),
-                Some("Subject Indexing"),
-                Some("Su"),
-            )
-        })
-        .or_else(|| {
-            item(
-                document,
-                Some("Subject"),
-                Some("Subject Category"),
-                Some("Su"),
-            )
-        });
-    raw.map(|s| {
-        s.split(" -- ")
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_owned)
-            .collect()
-    })
-    .unwrap_or_default()
+    let mut unique = Vec::new();
+    for data in subject_data(document) {
+        for line in markup_lines(data) {
+            for term in line.split(" -- ").map(str::trim) {
+                if !term.is_empty() && !unique.iter().any(|existing| existing == term) {
+                    unique.push(term.to_owned());
+                }
+            }
+        }
+    }
+    unique
+}
+
+fn subject_data(document: &Value) -> impl Iterator<Item = &str> {
+    document
+        .get("Items")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|entry| entry.get("Group").and_then(Value::as_str) == Some("Su"))
+        .filter_map(|entry| entry.get("Data").and_then(Value::as_str))
 }
 
 fn bib_entity(document: &Value) -> Option<&Value> {
@@ -212,13 +212,31 @@ fn deep_strings(value: Option<&Value>, key: &str, out: &mut Vec<String>) {
     }
 }
 pub fn sanitize_markup(input: &str) -> String {
+    strip_markup(&html_escape::decode_html_entities(input))
+}
+
+/// EDS packs several values into one `Data` string separated by `<br />`. The
+/// breaks have to be split before markup is stripped: stripping turns them
+/// into ordinary spaces, after which the values are indistinguishable from one
+/// run-on string.
+fn markup_lines(input: &str) -> Vec<String> {
+    static BREAK_TAG: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"(?i)<br\s*/?>").expect("valid regex"));
+    let decoded = html_escape::decode_html_entities(input);
+    BREAK_TAG
+        .split(&decoded)
+        .map(strip_markup)
+        .filter(|line| !line.is_empty())
+        .collect()
+}
+
+fn strip_markup(decoded: &str) -> String {
     static CONTROL_CHARACTERS: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]").expect("valid regex"));
     static WHITESPACE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("valid regex"));
     static SPACE_BEFORE_PUNCTUATION: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\s+([.,;:!?])").expect("valid regex"));
-    let decoded = html_escape::decode_html_entities(input);
-    let fragment = Html::parse_fragment(&decoded);
+    let fragment = Html::parse_fragment(decoded);
     let text = fragment.root_element().text().collect::<Vec<_>>().join(" ");
     let safe = CONTROL_CHARACTERS.replace_all(text.trim(), "");
     let normalized = WHITESPACE.replace_all(&safe, " ");
@@ -275,6 +293,71 @@ mod tests {
         assert_eq!(volume(&doc).as_deref(), Some("4"));
         assert_eq!(issue(&doc).as_deref(), Some("2"));
         assert_eq!(start_page(&doc).as_deref(), Some("3"));
+    }
+
+    /// Real `eric__EJ1497355` shape: two subject items, neither carrying one of
+    /// the labels the old allow-list looked for, each packing several terms
+    /// into one `Data` string separated by `<br />`.
+    #[test]
+    fn collects_subjects_from_every_labelled_group_and_splits_breaks() {
+        let descriptors = "&lt;searchLink fieldCode=&quot;DE&quot; term=&quot;%22Video+Games%22&quot;&gt;Video Games&lt;/searchLink&gt;&lt;br /&gt;&lt;searchLink fieldCode=&quot;DE&quot;&gt;History Instruction&lt;/searchLink&gt;&lt;br /&gt;Medieval History";
+        let geographic = "&lt;searchLink&gt;Spain&lt;/searchLink&gt;&lt;br /&gt;United Kingdom";
+        let doc = json!({
+            "Items": [
+                { "Name": "Subject", "Label": "Descriptors", "Group": "Su", "Data": descriptors },
+                { "Name": "Subject", "Label": "Geographic Terms", "Group": "Su", "Data": geographic },
+                { "Name": "Abstract", "Label": "Abstract", "Group": "Ab", "Data": "Not a subject." }
+            ]
+        });
+        assert_eq!(
+            subjects(&doc),
+            [
+                "Video Games",
+                "History Instruction",
+                "Medieval History",
+                "Spain",
+                "United Kingdom"
+            ]
+        );
+    }
+
+    /// Real `nlebk__805805` shape: LCSH headings keep their `--` subdivisions,
+    /// and BISAC categories are a separate item in the same `Su` group.
+    #[test]
+    fn keeps_subdivided_headings_and_includes_bisac_categories() {
+        let doc = json!({
+            "Items": [
+                { "Name": "Subject", "Label": "Subjects", "Group": "Su",
+                  "Data": "Video games--History&lt;br /&gt;Video games--Social aspects" },
+                { "Name": "SubjectBISAC", "Label": "Categories", "Group": "Su",
+                  "Data": "GAMES &amp;amp; ACTIVITIES / Board Games" }
+            ]
+        });
+        assert_eq!(
+            subjects(&doc),
+            [
+                "Video games--History",
+                "Video games--Social aspects",
+                "GAMES & ACTIVITIES / Board Games"
+            ]
+        );
+    }
+
+    #[test]
+    fn deduplicates_subjects_repeated_across_items() {
+        let doc = json!({
+            "Items": [
+                { "Name": "Subject", "Group": "Su", "Data": "Gene therapy&lt;br /&gt;Genetics" },
+                { "Name": "SubjectBISAC", "Group": "Su", "Data": "Genetics" }
+            ]
+        });
+        assert_eq!(subjects(&doc), ["Gene therapy", "Genetics"]);
+    }
+
+    #[test]
+    fn returns_no_subjects_when_the_record_has_none() {
+        assert!(subjects(&json!({ "Items": [] })).is_empty());
+        assert!(subjects(&json!({})).is_empty());
     }
 
     #[test]
