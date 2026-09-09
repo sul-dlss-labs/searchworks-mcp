@@ -285,8 +285,8 @@ fn catalog_result(doc: &Value) -> CatalogResult {
         format: first_string(doc, &["format", "format_main_ssim"]),
         pub_date: first_string(doc, &["pub_date", "pub_year_tisim"]),
         url: public_url("view", &id),
-        library: first_string(doc, &["library"]),
-        call_number: first_string(doc, &["callnum_display"]),
+        libraries: strings(doc.get("holdings_library_code_ssim")),
+        call_number: first_string(doc, &["lc_assigned_callnum_ssim"]),
     }
 }
 
@@ -482,4 +482,45 @@ fn record_text(output: &RecordOutput) -> String {
         lines.push(format!("{}: {}", key.replace('_', " "), value));
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    /// Shaped after a real `catalog.json` doc. Search docs carry holdings in
+    /// `holdings_library_code_ssim` / `lc_assigned_callnum_ssim`; the bare
+    /// `library` and `callnum_display` names exist only on other endpoints, so
+    /// reading them here silently yielded null for every result.
+    fn search_doc() -> Value {
+        json!({
+            "id": "994811",
+            "title_display": "Rust [poems]",
+            "author_person_display": ["Hilberry, Conrad."],
+            "format_main_ssim": ["Book"],
+            "pub_date": "1974",
+            "holdings_library_code_ssim": ["SCIENCE", "GREEN"],
+            "lc_assigned_callnum_ssim": ["PS3558.I384.R8"]
+        })
+    }
+
+    #[test]
+    fn projects_holdings_from_search_doc_fields() {
+        let result = catalog_result(&search_doc());
+        assert_eq!(result.libraries, ["SCIENCE", "GREEN"]);
+        assert_eq!(result.call_number.as_deref(), Some("PS3558.I384.R8"));
+        assert_eq!(result.title, "Rust [poems]");
+        assert_eq!(result.format.as_deref(), Some("Book"));
+        assert_eq!(result.pub_date.as_deref(), Some("1974"));
+        assert_eq!(result.url, "https://searchworks.stanford.edu/view/994811");
+    }
+
+    #[test]
+    fn omits_holdings_when_the_doc_has_none() {
+        let result = catalog_result(&json!({ "id": "1", "title_display": "T" }));
+        assert!(result.libraries.is_empty());
+        assert_eq!(result.call_number, None);
+    }
 }

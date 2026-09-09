@@ -137,8 +137,8 @@ pub struct CatalogResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pub_date: Option<String>,
     pub url: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub library: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub libraries: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub call_number: Option<String>,
 }
