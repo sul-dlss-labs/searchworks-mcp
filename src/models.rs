@@ -31,12 +31,6 @@ pub enum SearchField {
     Subject,
 }
 
-impl Default for SearchField {
-    fn default() -> Self {
-        Self::AllFields
-    }
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CatalogSearchArgs {
