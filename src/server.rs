@@ -342,8 +342,8 @@ fn catalog_result(doc: &Value) -> CatalogResult {
             doc,
             &["author_person_display", "author_person_full_display"],
         ),
-        format: first_string(doc, &["format", "format_main_ssim"]),
-        pub_date: first_string(doc, &["pub_date", "pub_year_tisim"]),
+        format: first_string(doc, &["format_main_ssim"]),
+        pub_date: first_string(doc, &["pub_date"]),
         url: public_url("view", &id),
         libraries: strings(doc.get("holdings_library_code_ssim")),
         call_number: first_string(doc, &["lc_assigned_callnum_ssim"]),
@@ -404,6 +404,10 @@ fn parse_facets(value: Option<&Value>) -> BTreeMap<String, Facet> {
         .collect()
 }
 
+/// Each list is tried in order and the first non-empty one wins. The names
+/// were checked against live `catalog.json` and `view/:id` responses; entries
+/// that never appeared, and never rescued a document whose other names were
+/// absent, are deliberately not listed.
 fn catalog_metadata(doc: &Value) -> BTreeMap<String, Value> {
     let mut m = BTreeMap::new();
     for (key, fields) in [
@@ -415,15 +419,12 @@ fn catalog_metadata(doc: &Value) -> BTreeMap<String, Value> {
                 "author_corp_display",
             ][..],
         ),
-        (
-            "formats",
-            &["format_hsim", "format", "format_main_ssim"][..],
-        ),
+        ("formats", &["format_hsim", "format_main_ssim"][..]),
         ("publication_years", &["pub_year_tisim", "pub_date"][..]),
         ("languages", &["language"][..]),
         ("subjects", &["subject_all_search", "topic_facet"][..]),
         ("genres", &["genre_ssim"][..]),
-        ("call_numbers", &["callnum_display", "callnum_search"][..]),
+        ("call_numbers", &["callnum_search"][..]),
         ("isbn", &["isbn_display"][..]),
         ("oclc", &["oclc"][..]),
     ] {
