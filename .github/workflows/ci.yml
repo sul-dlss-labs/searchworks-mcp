@@ -43,6 +43,26 @@ jobs:
       - name: Test
         run: cargo test --all-features --locked
 
+  # Lints and renders the chart the way ArgoCD will, so a broken template or a
+  # values regression fails the pull request rather than the sync.
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint
+        run: helm lint charts/searchworks-mcp --set image.tag=sha-${{ github.sha }}
+
+      - name: Render
+        run: >
+          helm template searchworks-mcp charts/searchworks-mcp
+          --set image.tag=sha-${{ github.sha }}
+          --set 'config.allowedHosts={searchworks-mcp.example.edu}'
+          > /dev/null
+
   image:
     name: Image
     needs: test
@@ -69,9 +89,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          # Resolves to ghcr.io/sul-dlss-labs/searchworks-mcp, the image
-          # deploy/base/deployment.yaml pins. Transferring the repository moves
-          # this but not the manifest; update both together.
+          # Resolves to ghcr.io/sul-dlss-labs/searchworks-mcp, the default
+          # image.repository in charts/searchworks-mcp/values.yaml. Transferring
+          # the repository moves this but not the chart; update both together.
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=sha,prefix=sha-,format=long
