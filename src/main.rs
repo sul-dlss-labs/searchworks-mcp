@@ -5,6 +5,7 @@ use rmcp::transport::streamable_http_server::{
     StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
 };
 use searchworks_mcp::{client::SearchworksClient, config::Config, server::SearchworksMcp};
+use tokio::signal::unix::{SignalKind, signal};
 use tokio_util::sync::CancellationToken;
 use tower_http::{
     catch_panic::CatchPanicLayer,
@@ -55,7 +56,19 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn shutdown(cancellation: CancellationToken) {
-    let _ = tokio::signal::ctrl_c().await;
+    let signal = terminating_signal().await;
+    tracing::info!(signal, "shutting down");
     cancellation.cancel();
     tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+/// Kubernetes stops pods with SIGTERM, so waiting only on SIGINT would leave
+/// every rollout, scale-down, and eviction hanging until the grace period
+/// expires and the container is killed with in-flight requests still open.
+async fn terminating_signal() -> &'static str {
+    let mut terminate = signal(SignalKind::terminate()).expect("SIGTERM handler can be registered");
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => "SIGINT",
+        _ = terminate.recv() => "SIGTERM",
+    }
 }
