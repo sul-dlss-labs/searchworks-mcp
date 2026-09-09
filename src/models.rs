@@ -72,11 +72,7 @@ impl CatalogFilters {
         [
             ("access", self.access.as_deref(), "access_facet"),
             ("format", self.format.as_deref(), "format_hsim"),
-            (
-                "library",
-                self.library.as_deref(),
-                "library_code_facet_ssim",
-            ),
+            ("library", self.library.as_deref(), "library"),
             ("genre", self.genre.as_deref(), "genre_ssim"),
             ("language", self.language.as_deref(), "language"),
             ("author", self.author.as_deref(), "author_person_facet"),
@@ -188,4 +184,62 @@ pub struct RecordOutput {
     pub title: String,
     pub url: String,
     pub metadata: BTreeMap<String, Value>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The upstream field names are SearchWorks facet field names, verified
+    /// against the `facets[].name` values returned by `catalog.json`. A wrong
+    /// name is silently ignored by Blacklight, so the filter would become a
+    /// no-op rather than an error.
+    #[test]
+    fn maps_every_filter_to_its_upstream_facet_field() {
+        let filters = CatalogFilters {
+            access: Some("Online".into()),
+            format: Some("Book".into()),
+            library: Some("GREEN".into()),
+            genre: Some("Bibliography".into()),
+            language: Some("German".into()),
+            author: Some("Ellington, Duke, 1899-1974".into()),
+            topic: Some("Iron".into()),
+            region: Some("Africa".into()),
+            call_number: Some("T".into()),
+            era: Some("1900-1999".into()),
+            organization_as_author: Some("Stanford University".into()),
+        };
+        let mappings = filters
+            .pairs()
+            .map(|(friendly, _, field)| (friendly, field))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mappings,
+            [
+                ("access", "access_facet"),
+                ("format", "format_hsim"),
+                ("library", "library"),
+                ("genre", "genre_ssim"),
+                ("language", "language"),
+                ("author", "author_person_facet"),
+                ("topic", "topic_facet"),
+                ("region", "geographic_facet"),
+                ("call_number", "callnum_facet_hsim"),
+                ("era", "era_facet"),
+                ("organization_as_author", "author_other_facet"),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_filters_that_were_not_supplied() {
+        let filters = CatalogFilters {
+            library: Some("GREEN".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            filters.pairs().collect::<Vec<_>>(),
+            [("library", "GREEN", "library")]
+        );
+    }
 }
