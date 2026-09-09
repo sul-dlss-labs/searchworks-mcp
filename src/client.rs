@@ -75,7 +75,6 @@ impl SearchworksClient {
             .map_err(|_| ApiError::InvalidResponse)?;
         url.query_pairs_mut()
             .append_pair("format", "json")
-            .append_pair("guest", "true")
             .append_pair("q", query)
             .append_pair("search_field", field)
             .append_pair("per_page", &rows.to_string());
@@ -90,9 +89,7 @@ impl SearchworksClient {
         url.path_segments_mut()
             .map_err(|_| ApiError::InvalidResponse)?
             .push(id);
-        url.query_pairs_mut()
-            .append_pair("format", "json")
-            .append_pair("guest", "true");
+        url.query_pairs_mut().append_pair("format", "json");
         self.get_json(url, false).await
     }
 
@@ -174,12 +171,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn article_search_forces_guest_json_requests() {
+    async fn article_search_requests_json() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/articles"))
             .and(query_param("format", "json"))
-            .and(query_param("guest", "true"))
             .and(query_param("q", "climate"))
             .and(query_param("search_field", "search"))
             .and(query_param("per_page", "3"))

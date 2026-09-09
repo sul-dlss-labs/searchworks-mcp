@@ -9,7 +9,7 @@ A stateless Rust MCP server that presents Stanford SearchWorks catalog and artic
 - `get_catalog_record`
 - `get_article`
 
-The server never returns licensed article full text. Article requests explicitly use SearchWorks guest mode.
+The server sends no credentials upstream, and forwards no caller identity; access control is Envoy's job, per [docs/authentication.md](docs/authentication.md).
 
 ## Run locally
 
