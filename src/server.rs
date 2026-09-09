@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 use crate::{
     client::SearchworksClient,
     eds,
-    error::ApiError,
+    error::{ApiError, ErrorKind},
     models::{
         ArticleResult, ArticleSearchArgs, ArticleSearchOutput, CatalogResult, CatalogSearchArgs,
         CatalogSearchOutput, Facet, FacetValue, RecordArgs, RecordOutput, SearchField,
@@ -39,13 +39,35 @@ impl SearchworksMcp {
         Ok(result)
     }
 
+    /// `operation` names the failed call, e.g. "Catalog search". The rest of
+    /// the message comes from the failure kind, so an agent can tell a bad id
+    /// from an outage instead of retrying a request that can never succeed.
     fn api_error(
         &self,
         error: ApiError,
-        message: &'static str,
+        operation: &'static str,
     ) -> Result<CallToolResult, McpError> {
-        tracing::error!(error = %error, "SearchWorks tool call failed");
-        let structured = json!({ "error": message });
+        let kind = error.kind();
+        if kind.retryable() {
+            tracing::error!(error = %error, operation, "SearchWorks tool call failed");
+        } else {
+            tracing::warn!(error = %error, operation, "SearchWorks tool call failed");
+        }
+        let message = match kind {
+            ErrorKind::NotFound => {
+                format!(
+                    "{operation} found no such record. Check that the id came from a search tool."
+                )
+            }
+            ErrorKind::RateLimited => {
+                format!("{operation} is rate limited upstream. Wait before retrying.")
+            }
+            ErrorKind::BadRequest => {
+                format!("{operation} was rejected as an invalid request. Check the arguments.")
+            }
+            ErrorKind::Unavailable => format!("{operation} is temporarily unavailable."),
+        };
+        let structured = json!({ "error": message, "retryable": kind.retryable() });
         let mut result = CallToolResult::structured_error(structured);
         result.content = vec![ContentBlock::text(message)];
         Ok(result)
@@ -82,7 +104,7 @@ impl SearchworksMcp {
             .await
         {
             Ok(v) => v,
-            Err(e) => return self.api_error(e, "Catalog search is temporarily unavailable."),
+            Err(e) => return self.api_error(e, "Catalog search"),
         };
         let root = response
             .pointer("/response")
@@ -128,7 +150,7 @@ impl SearchworksMcp {
             .await
         {
             Ok(v) => v,
-            Err(e) => return self.api_error(e, "Article search is temporarily unavailable."),
+            Err(e) => return self.api_error(e, "Article search"),
         };
         let root = response
             .pointer("/response")
@@ -166,7 +188,7 @@ impl SearchworksMcp {
         let response = match self.client.catalog_record(&args.id).await {
             Ok(v) => v,
             Err(e) => {
-                return self.api_error(e, "Catalog record retrieval is temporarily unavailable.");
+                return self.api_error(e, "Catalog record retrieval");
             }
         };
         let doc = response
@@ -195,7 +217,7 @@ impl SearchworksMcp {
         validate_id(&args.id)?;
         let response = match self.client.article_record(&args.id).await {
             Ok(v) => v,
-            Err(e) => return self.api_error(e, "Article retrieval is temporarily unavailable."),
+            Err(e) => return self.api_error(e, "Article retrieval"),
         };
         let doc = response
             .pointer("/response/document")
