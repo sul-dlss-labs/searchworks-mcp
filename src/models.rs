@@ -78,31 +78,55 @@ pub struct CatalogFilters {
     pub organization_as_author: Option<String>,
 }
 
+/// Adding a filter here without adding its value below is a compile error, so
+/// the request side (`pairs`) and the response side (`filter_name_for_facet`)
+/// cannot disagree about which SearchWorks facet field a filter means. A wrong
+/// field name is silently ignored upstream rather than rejected, so a drifting
+/// entry would turn a filter into a no-op with no visible failure.
+const FILTER_COUNT: usize = 11;
+const FILTER_FIELDS: [(&str, &str); FILTER_COUNT] = [
+    ("access", "access_facet"),
+    ("format", "format_hsim"),
+    ("library", "library"),
+    ("genre", "genre_ssim"),
+    ("language", "language"),
+    ("author", "author_person_facet"),
+    ("topic", "topic_facet"),
+    ("region", "geographic_facet"),
+    ("call_number", "callnum_facet_hsim"),
+    ("era", "era_facet"),
+    ("organization_as_author", "author_other_facet"),
+];
+
+/// The filter name that narrows a search by the given upstream facet field, if
+/// this server exposes one. Used to key returned facets by the name a caller
+/// passes back in `filters`.
+pub fn filter_name_for_facet(upstream_field: &str) -> Option<&'static str> {
+    FILTER_FIELDS
+        .iter()
+        .find(|(_, field)| *field == upstream_field)
+        .map(|(name, _)| *name)
+}
+
 impl CatalogFilters {
     pub fn pairs(&self) -> impl Iterator<Item = (&'static str, &str, &'static str)> {
-        [
-            ("access", self.access.as_deref(), "access_facet"),
-            ("format", self.format.as_deref(), "format_hsim"),
-            ("library", self.library.as_deref(), "library"),
-            ("genre", self.genre.as_deref(), "genre_ssim"),
-            ("language", self.language.as_deref(), "language"),
-            ("author", self.author.as_deref(), "author_person_facet"),
-            ("topic", self.topic.as_deref(), "topic_facet"),
-            ("region", self.region.as_deref(), "geographic_facet"),
-            (
-                "call_number",
-                self.call_number.as_deref(),
-                "callnum_facet_hsim",
-            ),
-            ("era", self.era.as_deref(), "era_facet"),
-            (
-                "organization_as_author",
-                self.organization_as_author.as_deref(),
-                "author_other_facet",
-            ),
-        ]
-        .into_iter()
-        .filter_map(|(friendly, value, field)| value.map(|v| (friendly, v, field)))
+        let values: [Option<&str>; FILTER_COUNT] = [
+            self.access.as_deref(),
+            self.format.as_deref(),
+            self.library.as_deref(),
+            self.genre.as_deref(),
+            self.language.as_deref(),
+            self.author.as_deref(),
+            self.topic.as_deref(),
+            self.region.as_deref(),
+            self.call_number.as_deref(),
+            self.era.as_deref(),
+            self.organization_as_author.as_deref(),
+        ];
+        FILTER_FIELDS
+            .into_iter()
+            .zip(values)
+            .filter_map(|((friendly, field), value)| value.map(|v| (friendly, v, field)))
     }
 }
 

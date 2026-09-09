@@ -17,6 +17,7 @@ use crate::{
         ArticleResult, ArticleSearchArgs, ArticleSearchOutput, CatalogFilters, CatalogResult,
         CatalogSearchArgs, CatalogSearchOutput, Facet, FacetValue, MAX_FILTER_CHARS, MAX_ID_CHARS,
         MAX_QUERY_CHARS, MAX_ROWS, MIN_ROWS, RecordArgs, RecordOutput, SearchField,
+        filter_name_for_facet,
     },
 };
 
@@ -376,14 +377,15 @@ fn parse_facets(value: Option<&Value>) -> BTreeMap<String, Facet> {
         .into_iter()
         .flatten()
         .filter_map(|facet| {
+            // Key each facet by the filter name that consumes it, taken from
+            // the upstream field name. Deriving keys from display labels
+            // instead produced names no filter accepted ("Organization (as
+            // author)" became `organization__as_author`), and offered facets
+            // this server cannot filter on at all -- and because the filter
+            // object denies unknown fields, passing one back is a hard error
+            // rather than a no-op.
+            let key = filter_name_for_facet(facet.get("name")?.as_str()?)?;
             let label = facet.get("label")?.as_str()?.to_owned();
-            let key = label
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-                .collect::<String>()
-                .trim_matches('_')
-                .to_owned();
             let values = facet
                 .get("items")
                 .and_then(Value::as_array)
@@ -397,7 +399,7 @@ fn parse_facets(value: Option<&Value>) -> BTreeMap<String, Facet> {
                     })
                 })
                 .collect();
-            Some((key, Facet { label, values }))
+            Some((key.to_owned(), Facet { label, values }))
         })
         .collect()
 }
@@ -563,6 +565,79 @@ mod tests {
             "holdings_library_code_ssim": ["SCIENCE", "GREEN"],
             "lc_assigned_callnum_ssim": ["PS3558.I384.R8"]
         })
+    }
+
+    /// Shaped after the real `facets` array, including the two entries whose
+    /// labels used to produce unusable keys.
+    fn facets() -> Value {
+        json!([
+            { "name": "access_facet", "label": "Access",
+              "items": [{ "value": "Online", "hits": 3417 }, { "value": "At the Library", "hits": 12 }] },
+            { "name": "author_other_facet", "label": "Organization (as author)",
+              "items": [{ "value": "Stanford University", "hits": 7 }] },
+            { "name": "library", "label": "Library",
+              "items": [{ "value": "GREEN", "hits": 325 }] },
+            { "name": "pub_year_tisim", "label": "Date",
+              "items": [{ "value": "2020", "hits": 5 }] },
+            { "name": "collection", "label": "Collection",
+              "items": [{ "value": "Some collection", "hits": 2 }] }
+        ])
+    }
+
+    #[test]
+    fn keys_facets_by_the_filter_name_that_consumes_them() {
+        let parsed = parse_facets(Some(&facets()));
+        assert_eq!(
+            parsed.keys().collect::<Vec<_>>(),
+            ["access", "library", "organization_as_author"]
+        );
+        assert_eq!(parsed["access"].label, "Access");
+        assert_eq!(parsed["access"].values[0].value, "Online");
+        assert_eq!(parsed["access"].values[0].count, 3417);
+        // "Organization (as author)" used to key as `organization__as_author`.
+        assert_eq!(
+            parsed["organization_as_author"].label,
+            "Organization (as author)"
+        );
+    }
+
+    /// The point of the facet block is to tell the caller what to filter on
+    /// next, so anything this server cannot filter on is left out.
+    #[test]
+    fn omits_facets_with_no_matching_filter() {
+        let parsed = parse_facets(Some(&facets()));
+        assert!(!parsed.contains_key("date"));
+        assert!(!parsed.contains_key("collection"));
+        assert!(!parsed.contains_key("pub_year_tisim"));
+    }
+
+    #[test]
+    fn every_returned_facet_key_is_an_accepted_filter_name() {
+        let parsed = parse_facets(Some(&facets()));
+        for key in parsed.keys() {
+            let json = json!({ key: "x" });
+            serde_json::from_value::<CatalogFilters>(json)
+                .unwrap_or_else(|e| panic!("facet key {key} is not a valid filter: {e}"));
+        }
+    }
+
+    #[test]
+    fn caps_facet_values() {
+        let items = (0..9)
+            .map(|n| json!({ "value": n.to_string(), "hits": 1 }))
+            .collect::<Vec<_>>();
+        let parsed = parse_facets(Some(&json!([
+            { "name": "access_facet", "label": "Access", "items": items }
+        ])));
+        assert_eq!(parsed["access"].values.len(), 5);
+    }
+
+    #[test]
+    fn handles_missing_or_malformed_facets() {
+        assert!(parse_facets(None).is_empty());
+        assert!(parse_facets(Some(&json!([]))).is_empty());
+        assert!(parse_facets(Some(&json!("nonsense"))).is_empty());
+        assert!(parse_facets(Some(&json!([{ "label": "No name field" }]))).is_empty());
     }
 
     #[test]
