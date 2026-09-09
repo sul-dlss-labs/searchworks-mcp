@@ -54,7 +54,8 @@ kubectl apply -k deploy/base
 
 Before applying them:
 
-1. Replace the example container image with the immutable image produced by CI.
+1. Replace the example container image with an immutable tag from CI, i.e.
+   `ghcr.io/<owner>/searchworks-mcp:sha-<commit>` rather than `:latest`.
 2. Decide whether Envoy runs as the ingress/gateway or as a sidecar.
 3. Configure Keycloak and Envoy using the requirements in [docs/authentication.md](docs/authentication.md).
 4. Arrange a SearchWorks service quota and bot-challenge bypass. All calls otherwise share the Kubernetes egress IP.
@@ -69,3 +70,16 @@ make check
 ```
 
 Because `Cargo.lock` is committed and the Docker build uses `--locked`, dependency versions are reproducible.
+
+## Continuous integration
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pull requests and on pushes to
+`main`. It checks formatting, runs Clippy with warnings denied, and runs the tests against the
+same Rust version the release image is built with.
+
+The container image is built on every run, so a broken `Dockerfile` fails a pull request. Only a
+push to `main` publishes it to GitHub Container Registry, tagged both `sha-<commit>` and
+`latest`. Deploy the `sha-` tag: it is immutable, whereas `latest` moves with every merge.
+
+Publishing uses the workflow's built-in `GITHUB_TOKEN`, so no registry secret has to be
+configured. The package is private until made public in the repository's package settings.
