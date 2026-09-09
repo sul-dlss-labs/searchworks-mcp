@@ -1,0 +1,63 @@
+# Default values for searchworks-mcp.
+
+replicaCount: 2
+
+image:
+  repository: ghcr.io/sul-dlss-labs/searchworks-mcp
+  # Required. CI publishes an immutable sha-<commit> tag on every push to
+  # main; deploy one of those. There is no default because :latest moves with
+  # every merge, and IfNotPresent is only safe against an immutable tag.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+# Rendered into the ConfigMap the container reads with envFrom. The
+# Configuration table in the README describes each setting.
+config:
+  bindAddress: "0.0.0.0:3000"
+  searchworksBaseUrl: "https://searchworks.stanford.edu"
+  requestTimeoutSeconds: 15
+  maxResponseBytes: 2000000
+  rustLog: "searchworks_mcp=info,tower_http=info"
+  # Leave empty to use the application default, searchworks-mcp/<version>.
+  upstreamUserAgent: ""
+  # HTTP Host values the MCP endpoint accepts. The Service name and loopback
+  # addresses are always included; add the external hostname Envoy routes here.
+  allowedHosts: []
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 32Mi
+  limits:
+    memory: 128Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop: ["ALL"]
+  readOnlyRootFilesystem: true
+
+readinessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  periodSeconds: 10
+
+livenessProbe:
+  httpGet:
+    path: /healthz
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 20

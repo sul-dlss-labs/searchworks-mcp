@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "searchworks-mcp.fullname" . }}
+  labels:
+    {{- include "searchworks-mcp.labels" . | nindent 4 }}
+data:
+  BIND_ADDRESS: {{ .Values.config.bindAddress | quote }}
+  SEARCHWORKS_BASE_URL: {{ .Values.config.searchworksBaseUrl | quote }}
+  REQUEST_TIMEOUT_SECONDS: {{ .Values.config.requestTimeoutSeconds | int64 | quote }}
+  MAX_RESPONSE_BYTES: {{ .Values.config.maxResponseBytes | int64 | quote }}
+  MCP_ALLOWED_HOSTS: {{ include "searchworks-mcp.allowedHosts" . | quote }}
+  RUST_LOG: {{ .Values.config.rustLog | quote }}
+  {{- with .Values.config.upstreamUserAgent }}
+  UPSTREAM_USER_AGENT: {{ . | quote }}
+  {{- end }}

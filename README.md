@@ -45,21 +45,27 @@ The HTTP client rejects redirects and non-JSON responses, caps response size, re
 
 ## Kubernetes
 
-The starter manifests in `deploy/base` create two application replicas, a ClusterIP Service, health probes, conservative resource settings, a read-only filesystem, and a non-root container.
+The Helm chart in `charts/searchworks-mcp` creates two application replicas, a ClusterIP Service on port 80, health probes, conservative resource settings, a read-only filesystem, and a non-root container. Every setting in the Configuration table is exposed under `config` in `charts/searchworks-mcp/values.yaml`.
+
+Two values matter for every deployment:
+
+- `image.tag` is required. Use an immutable tag from CI, `sha-<commit>`, not `latest`.
+- `config.allowedHosts` takes the external hostname Envoy routes to the Service. The Service name and loopback addresses are always accepted.
 
 ```sh
-kubectl kustomize deploy/base
-kubectl apply -k deploy/base
+helm template searchworks-mcp charts/searchworks-mcp \
+  --set image.tag=sha-<commit> \
+  --set 'config.allowedHosts={searchworks-mcp.example.edu}'
 ```
 
-Before applying them:
+`make chart` lints and renders the chart with placeholder values.
 
-1. Replace the example container image with an immutable tag from CI, i.e.
-   `ghcr.io/<owner>/searchworks-mcp:sha-<commit>` rather than `:latest`.
-2. Decide whether Envoy runs as the ingress/gateway or as a sidecar.
-3. Configure Keycloak and Envoy using the requirements in [docs/authentication.md](docs/authentication.md).
-4. Arrange a SearchWorks service quota and bot-challenge bypass. All calls otherwise share the Kubernetes egress IP.
-5. Prefer adding a curated/versioned article-detail JSON response to SearchWorks; the current adapter necessarily mirrors part of `EdsDocument` parsing.
+Before deploying:
+
+1. Decide whether Envoy runs as the ingress/gateway or as a sidecar.
+2. Configure Keycloak and Envoy using the requirements in [docs/authentication.md](docs/authentication.md).
+3. Arrange a SearchWorks service quota and bot-challenge bypass. All calls otherwise share the Kubernetes egress IP.
+4. Prefer adding a curated/versioned article-detail JSON response to SearchWorks; the current adapter necessarily mirrors part of `EdsDocument` parsing.
 
 Do not expose the Kubernetes Service directly. Envoy should be the public authentication boundary.
 

@@ -1,4 +1,4 @@
-.PHONY: build check fmt test docker-build docker-run
+.PHONY: build check fmt test chart docker-build docker-run
 
 build:
 	cargo build
@@ -13,6 +13,10 @@ fmt:
 
 test:
 	cargo test
+
+chart:
+	helm lint charts/searchworks-mcp --set image.tag=dev
+	helm template searchworks-mcp charts/searchworks-mcp --set image.tag=dev > /dev/null
 
 docker-build:
 	docker build -t searchworks-mcp:dev .

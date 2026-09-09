@@ -1,0 +1,9 @@
+apiVersion: v2
+name: searchworks-mcp
+description: Stateless MCP server presenting Stanford SearchWorks catalog and article metadata as read-only tools.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/sul-dlss-labs/searchworks-mcp
+sources:
+  - https://github.com/sul-dlss-labs/searchworks-mcp
